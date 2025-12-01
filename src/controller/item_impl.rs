@@ -1,10 +1,12 @@
+use std::collections::BTreeMap;
+
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{
     parse::{Parse, ParseStream},
     parse_quote,
     spanned::Spanned,
-    Attribute, Ident, ImplItem, ImplItemFn, ItemImpl, Result, Signature, Token, Visibility,
+    Attribute, Ident, ImplItem, ImplItemFn, ItemImpl, LitInt, Result, Signature, Token, Visibility,
 };
 
 use crate::controller::item_struct::{GetterFieldInfo, PublishedFieldInfo, SetterFieldInfo};
@@ -25,6 +27,16 @@ pub(crate) fn expand(
         _ => None,
     });
     let signal_declarations = signals.clone().map(|s| &s.declarations);
+
+    // Extract poll methods and group them by duration.
+    let poll_methods: Vec<_> = methods
+        .iter()
+        .filter_map(|m| match m {
+            Method::Poll(poll) => Some(poll),
+            _ => None,
+        })
+        .collect();
+    let (poll_ticker_declarations, poll_select_arms) = generate_poll_code(&poll_methods);
 
     let methods = methods.iter().filter_map(|m| match m {
         Method::Proxied(method) => Some(method),
@@ -67,12 +79,14 @@ pub(crate) fn expand(
             #(#args_channels_rx_tx)*
             #(#pub_setter_rx_tx)*
             #(#pub_getter_rx_tx)*
+            #(#poll_ticker_declarations)*
 
             loop {
                 futures::select_biased! {
                     #(#select_arms,)*
                     #(#pub_setter_select_arms,)*
                     #(#pub_getter_select_arms,)*
+                    #(#poll_select_arms,)*
                 }
             }
         }
@@ -154,9 +168,20 @@ fn get_methods(input: &mut ItemImpl, struct_name: &Ident) -> Result<Vec<Method>>
         .items
         .iter_mut()
         .filter_map(|item| match item {
-            syn::ImplItem::Fn(m) => Some(ProxiedMethod::parse(m, struct_name).map(Method::Proxied)),
+            syn::ImplItem::Fn(m) => {
+                // Check if this is a poll method first.
+                match PollMethod::parse(m) {
+                    Ok(Some(poll)) => Some(Ok(Method::Poll(poll))),
+                    Ok(None) => {
+                        // Not a poll method, treat as proxied.
+                        Some(ProxiedMethod::parse(m, struct_name).map(Method::Proxied))
+                    }
+                    Err(e) => Some(Err(e)),
+                }
+            }
             syn::ImplItem::Verbatim(tokens) => {
-                // … thus parse them ourselves and construct an ImplItemFn from that
+                // Signal methods have a semicolon at the end instead of a body block,
+                // thus parse them ourselves and construct an ImplItemFn from that.
                 let ImplItemSignal { attrs, vis, sig } =
                     match syn::parse2::<ImplItemSignal>(tokens.clone()) {
                         Ok(decl) => decl,
@@ -207,6 +232,8 @@ enum Method {
     Proxied(ProxiedMethod),
     /// A signal method.
     Signal(Signal),
+    /// A method that will be called periodically.
+    Poll(PollMethod),
 }
 
 /// Method that will be called by the client.
@@ -520,6 +547,164 @@ impl Signal {
             subscriber_struct_name,
         })
     }
+}
+
+/// Duration for poll methods. Used as a key for grouping methods with the same timeout.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum PollDuration {
+    Seconds(u64),
+    Millis(u64),
+    Micros(u64),
+}
+
+impl PollDuration {
+    fn to_duration_expr(&self) -> TokenStream {
+        match self {
+            PollDuration::Seconds(n) => quote! { embassy_time::Duration::from_secs(#n) },
+            PollDuration::Millis(n) => quote! { embassy_time::Duration::from_millis(#n) },
+            PollDuration::Micros(n) => quote! { embassy_time::Duration::from_micros(#n) },
+        }
+    }
+}
+
+/// A method that will be called periodically with a timeout.
+#[derive(Debug)]
+struct PollMethod {
+    method_name: Ident,
+    duration: PollDuration,
+}
+
+impl PollMethod {
+    fn parse(method: &mut ImplItemFn) -> Result<Option<Self>> {
+        let mut duration: Option<(PollDuration, proc_macro2::Span)> = None;
+
+        // Check if method has a poll attribute.
+        for attr in &method.attrs {
+            if !attr.path().is_ident("controller") {
+                continue;
+            }
+
+            attr.parse_nested_meta(|meta| {
+                let new_duration = if meta.path.is_ident("poll_seconds") {
+                    meta.input.parse::<Token![=]>()?;
+                    let lit: LitInt = meta.input.parse()?;
+                    let value: u64 = lit.base10_parse()?;
+                    if value == 0 {
+                        return Err(syn::Error::new_spanned(
+                            lit,
+                            "poll duration must be greater than zero",
+                        ));
+                    }
+                    Some((PollDuration::Seconds(value), meta.path.span()))
+                } else if meta.path.is_ident("poll_millis") {
+                    meta.input.parse::<Token![=]>()?;
+                    let lit: LitInt = meta.input.parse()?;
+                    let value: u64 = lit.base10_parse()?;
+                    if value == 0 {
+                        return Err(syn::Error::new_spanned(
+                            lit,
+                            "poll duration must be greater than zero",
+                        ));
+                    }
+                    Some((PollDuration::Millis(value), meta.path.span()))
+                } else if meta.path.is_ident("poll_micros") {
+                    meta.input.parse::<Token![=]>()?;
+                    let lit: LitInt = meta.input.parse()?;
+                    let value: u64 = lit.base10_parse()?;
+                    if value == 0 {
+                        return Err(syn::Error::new_spanned(
+                            lit,
+                            "poll duration must be greater than zero",
+                        ));
+                    }
+                    Some((PollDuration::Micros(value), meta.path.span()))
+                } else {
+                    None
+                };
+
+                if let Some((new_dur, span)) = new_duration {
+                    if duration.is_some() {
+                        return Err(syn::Error::new(
+                            span,
+                            "only one poll attribute is allowed per method",
+                        ));
+                    }
+                    duration = Some((new_dur, span));
+                }
+
+                Ok(())
+            })?;
+        }
+
+        let Some((duration, _)) = duration else {
+            return Ok(None);
+        };
+
+        // Validate that poll methods have no parameters besides receiver.
+        let has_non_receiver_params = method
+            .sig
+            .inputs
+            .iter()
+            .any(|arg| matches!(arg, syn::FnArg::Typed(_)));
+        if has_non_receiver_params {
+            return Err(syn::Error::new_spanned(
+                &method.sig.inputs,
+                "poll methods cannot have parameters (only `&self` or `&mut self` is allowed)",
+            ));
+        }
+
+        // Remove the poll attribute from the method.
+        remove_poll_attr(method)?;
+
+        let method_name = method.sig.ident.clone();
+        Ok(Some(Self {
+            method_name,
+            duration,
+        }))
+    }
+}
+
+fn remove_poll_attr(method: &mut ImplItemFn) -> syn::Result<()> {
+    method.attrs = method
+        .attrs
+        .iter()
+        .cloned()
+        .filter_map(|attr| {
+            if !attr.path().is_ident("controller") {
+                return Some(Ok(attr));
+            }
+
+            let res = attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("poll_seconds")
+                    || meta.path.is_ident("poll_millis")
+                    || meta.path.is_ident("poll_micros")
+                {
+                    // Consume the `= N` part.
+                    meta.input.parse::<Token![=]>()?;
+                    let _: LitInt = meta.input.parse()?;
+                    Ok(())
+                } else {
+                    let path = &meta.path;
+                    let found = path
+                        .get_ident()
+                        .map(|ident| ident.to_string())
+                        .unwrap_or_else(|| quote!(#path).to_string());
+                    let e = format!(
+                        "poll methods cannot have other `controller` attributes (found `{}`); \
+                         remove attributes like `getter`, `setter`, `publish`, or `signal`",
+                        found
+                    );
+                    Err(syn::Error::new_spanned(meta.path, e))
+                }
+            });
+            match res {
+                Err(e) => Some(Err(e)),
+                Ok(()) => None,
+            }
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(())
 }
 
 // Like ImplItemFn, but with a semicolon at the end instead of a body block
@@ -845,4 +1030,43 @@ fn generate_pub_getter(field: &GetterFieldInfo, struct_name: &Ident) -> PubGette
         client_tx_rx_declarations,
         client_tx_rx_initializations,
     }
+}
+
+/// Generate ticker declarations and select arms for poll methods, grouped by duration.
+///
+/// Returns (ticker_declarations, select_arms) where:
+/// - ticker_declarations: Code to create Tickers before the loop.
+/// - select_arms: Select arms that wait on ticker.next().
+fn generate_poll_code(poll_methods: &[&PollMethod]) -> (Vec<TokenStream>, Vec<TokenStream>) {
+    // Group poll methods by duration.
+    let mut groups: BTreeMap<PollDuration, Vec<&Ident>> = BTreeMap::new();
+    for poll in poll_methods {
+        groups
+            .entry(poll.duration.clone())
+            .or_default()
+            .push(&poll.method_name);
+    }
+
+    let mut ticker_declarations = Vec::new();
+    let mut select_arms = Vec::new();
+
+    for (index, (duration, method_names)) in groups.into_iter().enumerate() {
+        let duration_expr = duration.to_duration_expr();
+        let ticker_name = Ident::new(
+            &format!("__poll_ticker_{index}"),
+            proc_macro2::Span::call_site(),
+        );
+
+        ticker_declarations.push(quote! {
+            let mut #ticker_name = embassy_time::Ticker::every(#duration_expr);
+        });
+
+        select_arms.push(quote! {
+            _ = futures::FutureExt::fuse(#ticker_name.next()) => {
+                #(self.#method_names().await;)*
+            }
+        });
+    }
+
+    (ticker_declarations, select_arms)
 }

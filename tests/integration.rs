@@ -273,3 +273,94 @@ fn test_visibility_on_fields() {
 async fn visibility_controller_task(controller: visibility_test_controller::Controller) {
     controller.run().await;
 }
+
+use std::sync::atomic::{AtomicU32, Ordering};
+
+static POLL_A_COUNT: AtomicU32 = AtomicU32::new(0);
+static POLL_B_COUNT: AtomicU32 = AtomicU32::new(0);
+static POLL_C_COUNT: AtomicU32 = AtomicU32::new(0);
+
+/// Test poll methods with timeouts.
+#[controller]
+mod poll_test_controller {
+    use super::*;
+
+    pub struct Controller {
+        #[controller(getter)]
+        pub value: u32,
+    }
+
+    impl Controller {
+        // Two methods with the same poll interval (50ms) - should be grouped.
+        #[controller(poll_millis = 50)]
+        pub async fn poll_a(&mut self) {
+            POLL_A_COUNT.fetch_add(1, Ordering::SeqCst);
+        }
+
+        #[controller(poll_millis = 50)]
+        pub async fn poll_b(&mut self) {
+            POLL_B_COUNT.fetch_add(1, Ordering::SeqCst);
+        }
+
+        // Different poll interval (100ms).
+        #[controller(poll_millis = 100)]
+        pub async fn poll_c(&mut self) {
+            POLL_C_COUNT.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+}
+
+/// Test that poll methods are called at the expected intervals.
+#[test]
+fn poll_methods() {
+    use embassy_time::{Duration, MockDriver};
+
+    // Reset mock driver and counters.
+    let driver = MockDriver::get();
+    driver.reset();
+    POLL_A_COUNT.store(0, Ordering::SeqCst);
+    POLL_B_COUNT.store(0, Ordering::SeqCst);
+    POLL_C_COUNT.store(0, Ordering::SeqCst);
+
+    let controller = poll_test_controller::Controller::new(42);
+
+    // Verify struct fields are accessible.
+    assert_eq!(controller.value, 42);
+
+    // Run the controller in a background thread.
+    std::thread::spawn(move || {
+        let executor = Box::leak(Box::new(embassy_executor::Executor::new()));
+        executor.run(move |spawner| {
+            spawner.spawn(poll_controller_task(controller)).unwrap();
+        });
+    });
+
+    // Give the executor a moment to start.
+    std::thread::sleep(std::time::Duration::from_millis(10));
+
+    // Advance mock time by 50ms - poll_a and poll_b should fire once.
+    driver.advance(Duration::from_millis(50));
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    assert_eq!(POLL_A_COUNT.load(Ordering::SeqCst), 1);
+    assert_eq!(POLL_B_COUNT.load(Ordering::SeqCst), 1);
+    assert_eq!(POLL_C_COUNT.load(Ordering::SeqCst), 0);
+
+    // Advance another 50ms (total 100ms) - poll_a/poll_b fire again, poll_c fires once.
+    driver.advance(Duration::from_millis(50));
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    assert_eq!(POLL_A_COUNT.load(Ordering::SeqCst), 2);
+    assert_eq!(POLL_B_COUNT.load(Ordering::SeqCst), 2);
+    assert_eq!(POLL_C_COUNT.load(Ordering::SeqCst), 1);
+
+    // Advance another 100ms (total 200ms) - poll_a/poll_b fire 2 more times, poll_c fires once.
+    driver.advance(Duration::from_millis(100));
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    assert_eq!(POLL_A_COUNT.load(Ordering::SeqCst), 4);
+    assert_eq!(POLL_B_COUNT.load(Ordering::SeqCst), 4);
+    assert_eq!(POLL_C_COUNT.load(Ordering::SeqCst), 2);
+}
+
+#[embassy_executor::task]
+async fn poll_controller_task(controller: poll_test_controller::Controller) {
+    controller.run().await;
+}
