@@ -201,7 +201,7 @@ dependencies = [
 
 [[package]]
 name = "firmware-controller"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "critical-section",
  "embassy-executor",

@@ -1,3 +1,7 @@
+# 0.4.2 (Dec 19th, 2025)
+
+* Add poll_seconds, poll_millis & poll_micros attributes. These attributes could be used to declare a controller method that's run by the `run` method, periodically based on the timeout specified.
+
 # 0.4.1 (Nov 26th, 2025)
 
 * Allow specifying visibility on struct fields.
