@@ -93,13 +93,24 @@ Processes the controller impl block. Distinguishes between:
 * Creates `<StructName><MethodName>` stream type and `<StructName><MethodName>Args` struct.
 * Signal methods are NOT exposed in the client API (controller emits them directly).
 
+**Poll methods** (marked with `#[controller(poll_*)]`):
+* Methods are called periodically at the specified interval.
+* Three time unit attributes are supported:
+  * `#[controller(poll_seconds = N)]` - Poll every N seconds.
+  * `#[controller(poll_millis = N)]` - Poll every N milliseconds.
+  * `#[controller(poll_micros = N)]` - Poll every N microseconds.
+* Methods with the same timeout value (same unit and value) are grouped into a single ticker arm.
+* All methods in a group are called sequentially when the ticker fires (in declaration order).
+* Poll methods are NOT exposed in the client API (internal to the controller).
+* Uses `embassy_time::Ticker::every()` for timing.
+
 **Getter/setter methods** (from struct field attributes):
 * Receives getter/setter field info from struct processing.
 * Generates client-side getter methods that request current field value.
 * Generates client-side setter methods that update field value (and broadcast if published).
 
 The generated `run()` method contains a `select_biased!` loop that receives method calls from
-clients and dispatches them to the user's implementations.
+clients, dispatches them to the user's implementations, and handles periodic poll method calls.
 
 ### Utilities (`src/util.rs`)
 Case conversion functions (`pascal_to_snake_case`, `snake_to_pascal_case`) used for generating type and method names.
@@ -109,6 +120,7 @@ Case conversion functions (`pascal_to_snake_case`, `snake_to_pascal_case`) used 
 User code must have these dependencies (per README):
 * `futures` with `async-await` feature.
 * `embassy-sync` for channels and synchronization.
+* `embassy-time` for poll method timing (only required if using poll methods).
 
 Dev dependencies include `embassy-executor` and `embassy-time` for testing.
 

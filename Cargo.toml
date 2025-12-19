@@ -30,10 +30,5 @@ embassy-sync = "0.7.2"
 embassy-executor = { version = "0.9.1", features = [
     "arch-std",
     "executor-thread",
-    "defmt",
 ] }
-embassy-time = { version = "0.5.0", features = [
-    "defmt",
-    "defmt-timestamp-uptime",
-    "tick-hz-32_768",
-] }
+embassy-time = { version = "0.5.0", features = ["mock-driver"] }

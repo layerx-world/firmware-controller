@@ -185,12 +185,72 @@ methods:
     signal events. The stream yields `<struct-name><method-name-in-pascal-case>Args` structs
     (e.g., `ControllerPowerErrorArgs`) containing all signal arguments as public fields.
 
+## Poll Methods
+
+Methods can be marked for periodic execution using poll attributes. These methods are called
+automatically by the controller's `run()` loop at the specified interval.
+
+Three time unit attributes are supported:
+* `#[controller(poll_seconds = N)]` - Poll every N seconds.
+* `#[controller(poll_millis = N)]` - Poll every N milliseconds.
+* `#[controller(poll_micros = N)]` - Poll every N microseconds.
+
+Example:
+```rust,no_run
+use firmware_controller::controller;
+
+#[controller]
+mod sensor_controller {
+    pub struct Controller {
+        #[controller(publish)]
+        temperature: f32,
+    }
+
+    impl Controller {
+        // Called every 5 seconds.
+        #[controller(poll_seconds = 5)]
+        pub async fn read_temperature(&mut self) {
+            // Read from sensor and update state.
+            self.set_temperature(42.0).await;
+        }
+
+        // Called every 100ms.
+        #[controller(poll_millis = 100)]
+        pub async fn check_watchdog(&mut self) {
+            // Pet the watchdog.
+        }
+
+        // Both called every second (grouped together).
+        #[controller(poll_seconds = 1)]
+        pub async fn log_status(&self) {
+            // Log current status.
+        }
+
+        #[controller(poll_seconds = 1)]
+        pub async fn blink_led(&mut self) {
+            // Toggle LED.
+        }
+    }
+}
+
+fn main() {}
+```
+
+Key characteristics:
+* Poll methods are **not** exposed in the client API. They are internal periodic tasks managed
+  entirely by the controller's `run()` loop.
+* Methods with the same timeout value (same unit and value) are grouped into a single timer arm
+  and called sequentially when the timer fires (in declaration order).
+* Uses `embassy_time::Ticker` for timing, which ensures consistent intervals regardless of method
+  execution time.
+
 ## Dependencies assumed
 
 The `controller` macro assumes that you have the following dependencies in your `Cargo.toml`:
 
 * `futures` with `async-await` feature enabled.
 * `embassy-sync`
+* `embassy-time` (only required if using poll methods)
 
 ## Known limitations & Caveats
 
