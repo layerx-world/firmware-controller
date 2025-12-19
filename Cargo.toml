@@ -1,7 +1,7 @@
 [package]
 name = "firmware-controller"
 description = "Controller to decouple interactions between components in a no_std environment."
-version = "0.4.1"
+version = "0.4.2"
 edition = "2021"
 authors = [
     "Zeeshan Ali Khan <zeenix@gmail.com>",
