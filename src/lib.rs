@@ -1,5 +1,11 @@
 #![doc = include_str!("../README.md")]
 
+#[cfg(not(any(feature = "embassy", feature = "tokio")))]
+compile_error!("Either the `embassy` or `tokio` feature must be enabled");
+
+#[cfg(all(feature = "embassy", feature = "tokio"))]
+compile_error!("The `embassy` and `tokio` features are mutually exclusive");
+
 use proc_macro::TokenStream;
 use syn::{parse_macro_input, punctuated::Punctuated, ItemMod, Meta, Token};
 

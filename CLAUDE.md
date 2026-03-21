@@ -4,7 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a procedural macro crate that provides the `#[controller]` attribute macro for firmware development in `no_std` environments. The macro generates boilerplate for decoupling component interactions through:
+This is a procedural macro crate that provides the `#[controller]` attribute macro for
+firmware/actor development. By default it targets `no_std` environments using embassy. With the
+`tokio` feature, it generates code for `std` environments using tokio. The macro generates
+boilerplate for decoupling component interactions through:
 
 * A controller struct that manages peripheral state.
 * Client API for sending commands to the controller.
@@ -16,8 +19,11 @@ The macro is applied to a module containing both the controller struct definitio
 ## Build & Test Commands
 
 ```bash
-# Run all tests (includes doc tests from README)
+# Run all tests with default (embassy) backend
 cargo test --locked
+
+# Run all tests with tokio backend
+cargo test --locked --no-default-features --features tokio
 
 # Run a specific test
 cargo test --locked <test_name>
@@ -28,8 +34,9 @@ cargo +nightly fmt -- --check
 # Auto-format code (requires nightly)
 cargo +nightly fmt
 
-# Run clippy (CI fails on warnings)
+# Run clippy for both backends (CI fails on warnings)
 cargo clippy --locked -- -D warnings
+cargo clippy --locked --no-default-features --features tokio -- -D warnings
 
 # Build the crate
 cargo build --locked
@@ -40,8 +47,25 @@ cargo doc --locked
 
 ## Architecture
 
+### Backend Selection
+
+The crate has two mutually exclusive features: `embassy` (default) and `tokio`. Code generation
+functions use `#[cfg(feature = "...")]` in the proc macro code (not in generated code) to select
+which token streams to emit. When `tokio` is enabled:
+
+* `embassy_sync::channel::Channel` → `tokio::sync::mpsc` + `tokio::sync::oneshot`
+  (request/response actor pattern)
+* `embassy_sync::watch::Watch` → `tokio::sync::watch` (via `std::sync::OnceLock`)
+* `embassy_sync::pubsub::PubSubChannel` → `tokio::sync::broadcast`
+  (via `std::sync::LazyLock`, with `tokio_stream::wrappers::BroadcastStream`)
+* Watch subscribers use `tokio_stream::wrappers::WatchStream`.
+* `embassy_time::Ticker` → `tokio::time::interval`
+* `futures::select_biased!` → `tokio::select! { biased; ... }`
+* Static channels use `std::sync::LazyLock` since tokio channels lack const constructors.
+
 ### Macro Entry Point (`src/lib.rs`)
-The `controller` attribute macro parses the input as an `ItemMod` (module) and calls `controller::expand_module()`.
+The `controller` attribute macro parses the input as an `ItemMod` (module) and calls
+`controller::expand_module()`.
 
 ### Module Processing (`src/controller/mod.rs`)
 The `expand_module()` function:
@@ -53,15 +77,16 @@ The `expand_module()` function:
 
 Channel capacities and subscriber limits are also defined here:
 * `ALL_CHANNEL_CAPACITY`: 8 (method/getter/setter request channels)
-* `SIGNAL_CHANNEL_CAPACITY`: 8 (signal PubSubChannel queue size)
-* `BROADCAST_MAX_PUBLISHERS`: 1 (signals only)
-* `BROADCAST_MAX_SUBSCRIBERS`: 16 (Watch for published fields, PubSubChannel for signals)
+* `SIGNAL_CHANNEL_CAPACITY`: 8 (signal PubSubChannel/broadcast queue size)
+* `BROADCAST_MAX_PUBLISHERS`: 1 (signals only, embassy only)
+* `BROADCAST_MAX_SUBSCRIBERS`: 16 (Watch for published fields, PubSubChannel for signals,
+  embassy only)
 
 ### Struct Processing (`src/controller/item_struct.rs`)
 Processes the controller struct definition. Supports three field attributes:
 
 **`#[controller(publish)]`** - Enables state change subscriptions:
-* Uses `embassy_sync::watch::Watch` channel (stores latest value).
+* Uses `embassy_sync::watch::Watch` (or `tokio::sync::watch`) channel (stores latest value).
 * Generates internal setter (`set_<field>`) that broadcasts changes.
 * Creates `<StructName><FieldName>` subscriber stream type.
 * Stream yields current value on first poll, then subsequent changes.
@@ -82,13 +107,14 @@ initial values to Watch channels so subscribers get them immediately.
 Processes the controller impl block. Distinguishes between:
 
 **Proxied methods** (normal methods):
-* Creates request/response channels for each method.
+* Creates request/response channels for each method. With tokio, uses `mpsc` + `oneshot` for the
+  request/response actor pattern.
 * Generates matching client-side methods that send requests and await responses.
 * Adds arms to the controller's `run()` method select loop to handle requests.
 
 **Signal methods** (marked with `#[controller(signal)]`):
 * Methods have no body in the user's impl block.
-* Uses `embassy_sync::pubsub::PubSubChannel` for broadcast.
+* Uses `embassy_sync::pubsub::PubSubChannel` (or `tokio::sync::broadcast`) for broadcast.
 * Generates method implementation that broadcasts to subscribers.
 * Creates `<StructName><MethodName>` stream type and `<StructName><MethodName>Args` struct.
 * Signal methods are NOT exposed in the client API (controller emits them directly).
@@ -102,15 +128,16 @@ Processes the controller impl block. Distinguishes between:
 * Methods with the same timeout value (same unit and value) are grouped into a single ticker arm.
 * All methods in a group are called sequentially when the ticker fires (in declaration order).
 * Poll methods are NOT exposed in the client API (internal to the controller).
-* Uses `embassy_time::Ticker::every()` for timing.
+* Uses `embassy_time::Ticker::every()` (or `tokio::time::interval()`) for timing.
 
 **Getter/setter methods** (from struct field attributes):
 * Receives getter/setter field info from struct processing.
 * Generates client-side getter methods that request current field value.
 * Generates client-side setter methods that update field value (and broadcast if published).
 
-The generated `run()` method contains a `select_biased!` loop that receives method calls from
-clients, dispatches them to the user's implementations, and handles periodic poll method calls.
+The generated `run()` method contains a `select_biased!` (or `tokio::select! { biased; ... }`) loop
+that receives method calls from clients, dispatches them to the user's implementations, and handles
+periodic poll method calls.
 
 ### Utilities (`src/util.rs`)
 Case conversion functions (`pascal_to_snake_case`, `snake_to_pascal_case`) used for generating type and method names.
@@ -118,18 +145,28 @@ Case conversion functions (`pascal_to_snake_case`, `snake_to_pascal_case`) used 
 ## Dependencies
 
 User code must have these dependencies (per README):
+
+**Default (embassy)**:
 * `futures` with `async-await` feature.
 * `embassy-sync` for channels and synchronization.
 * `embassy-time` for poll method timing (only required if using poll methods).
 
-Dev dependencies include `embassy-executor` and `embassy-time` for testing.
+**With `tokio` feature**:
+* `futures` with `async-await` feature.
+* `tokio` with `sync` feature (and `time` if using poll methods).
+* `tokio-stream` with `sync` feature.
+
+Dev dependencies include `embassy-executor`, `embassy-time`, `tokio`, and `tokio-stream` for
+testing.
 
 ## Key Limitations
 
 * Singleton operation: multiple controller instances interfere with each other.
 * Methods must be async and cannot use reference parameters/return types.
 * Maximum 16 subscribers per state/signal stream.
-* Published fields must implement `Clone`.
+* Published fields must implement `Clone`. With `tokio`, they must also implement `Send + Sync`.
+* Signal argument types must implement `Clone`. With `tokio`, they must also implement
+  `Send + 'static`.
 * Published field streams yield current value on first poll; intermediate values may be missed if
   not polled between changes.
 * Signal streams must be continuously polled or notifications are missed.

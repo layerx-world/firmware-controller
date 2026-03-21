@@ -3,7 +3,7 @@
 # Firmware Controller
 
 This crate provides a macro named `controller` that makes it easy to decouple interactions between
-components in a `no_std` environment.
+components. It works in both `no_std` (embassy) and `std` (tokio) environments.
 
 [Intro](#intro) •
 [Usage](#usage) •
@@ -13,8 +13,9 @@ components in a `no_std` environment.
 
 # Intro
 
-This crate provides a macro named `controller` that makes it easy to write controller logic for 
-firmware.
+This crate provides a macro named `controller` that makes it easy to write controller (actor)
+logic. By default it targets `no_std` firmware using embassy, but with the `tokio` feature it
+generates code for `std` environments using tokio instead.
 
 The controller is responsible for control of all the peripherals based on commands it receives from
 other parts of the code. It also notifies peers about state changes and events via signals.
@@ -241,16 +242,48 @@ Key characteristics:
   entirely by the controller's `run()` loop.
 * Methods with the same timeout value (same unit and value) are grouped into a single timer arm
   and called sequentially when the timer fires (in declaration order).
-* Uses `embassy_time::Ticker` for timing, which ensures consistent intervals regardless of method
-  execution time.
+* Uses `embassy_time::Ticker` (or `tokio::time::interval` with the `tokio` feature) for timing,
+  which ensures consistent intervals regardless of method execution time.
+
+## Backend selection
+
+The crate provides two mutually exclusive features: `embassy` (default) and `tokio`. Exactly one
+must be enabled; enabling both or neither is a compile error.
+
+By default, the macro generates code targeting embassy for `no_std` firmware. To use tokio instead,
+disable the default feature and enable `tokio`:
+
+```toml
+[dependencies]
+firmware-controller = { version = "0.4", default-features = false, features = ["tokio"] }
+```
+
+When the `tokio` feature is enabled:
+* Channels use `tokio::sync::mpsc` with `oneshot` for request/response.
+* Published fields use `tokio::sync::watch` (via `tokio_stream::wrappers::WatchStream`).
+* Signals use `tokio::sync::broadcast` (via `tokio_stream::wrappers::BroadcastStream`).
+* Poll methods use `tokio::time::interval`.
+* The `run()` loop uses `tokio::select!`.
+
+**Note:** With the `tokio` feature, signal argument types must additionally implement `Send +
+'static` (required by `tokio::sync::broadcast`), and published field types must implement `Send +
+Sync` (required by `tokio::sync::watch`). These constraints do not apply to the `embassy` backend.
 
 ## Dependencies assumed
 
 The `controller` macro assumes that you have the following dependencies in your `Cargo.toml`:
 
+### Default (embassy)
+
 * `futures` with `async-await` feature enabled.
 * `embassy-sync`
 * `embassy-time` (only required if using poll methods)
+
+### With `tokio` feature
+
+* `futures` with `async-await` feature enabled.
+* `tokio` with `sync` feature (and `time` if using poll methods)
+* `tokio-stream` with `sync` feature
 
 ## Known limitations & Caveats
 

@@ -1,6 +1,6 @@
 [package]
 name = "firmware-controller"
-description = "Controller to decouple interactions between components in a no_std environment."
+description = "Controller (actor) macro to decouple interactions between components, supporting both embassy (no_std) and tokio (std) backends."
 version = "0.4.2"
 edition = "2021"
 authors = [
@@ -12,6 +12,11 @@ repository = "https://github.com/layerx-world/firmware-controller/"
 
 [lib]
 proc-macro = true
+
+[features]
+default = ["embassy"]
+embassy = []
+tokio = []
 
 [dependencies]
 proc-macro2 = "1"
@@ -32,3 +37,11 @@ embassy-executor = { version = "0.9.1", features = [
     "executor-thread",
 ] }
 embassy-time = { version = "0.5.0", features = ["mock-driver"] }
+tokio = { version = "1", features = [
+    "macros",
+    "rt",
+    "sync",
+    "test-util",
+    "time",
+] }
+tokio-stream = { version = "0.1", features = ["sync"] }
