@@ -94,7 +94,7 @@ use controller::*;
 
 #[embassy_executor::main]
 async fn main(spawner: embassy_executor::Spawner) {
-    let mut controller = Controller::new(State::Disabled);
+    let controller = Controller::new(State::Disabled).unwrap();
 
     // Spawn the client task.
     spawner.spawn(client());
