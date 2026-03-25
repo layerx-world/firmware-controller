@@ -148,25 +148,43 @@ pub(crate) fn expand(mut input: ItemStruct) -> Result<ExpandedStruct> {
     });
     let vis = &input.vis;
 
+    // Generate a static AtomicBool to enforce singleton construction.
+    let struct_name_caps = pascal_to_snake_case(&struct_name.to_string()).to_ascii_uppercase();
+    let created_flag_name = Ident::new(&format!("{struct_name_caps}_CREATED"), struct_name.span());
+
     // Initial value sends are already collected from PublishedFieldCode.
 
     Ok(ExpandedStruct {
         tokens: quote! {
+            static #created_flag_name: core::sync::atomic::AtomicBool =
+                core::sync::atomic::AtomicBool::new(false);
+
             #vis struct #struct_name {
                 #(#fields),*,
                 #sender_fields_declarations
             }
 
             impl #struct_name {
+                /// Creates a new controller instance.
+                ///
+                /// Returns `None` if an instance has already been created.
+                /// Only one instance of a controller can exist at a time.
                 #[allow(clippy::too_many_arguments)]
-                pub fn new(#(#new_fn_params),*) -> Self {
+                pub fn new(#(#new_fn_params),*) -> Option<Self> {
+                    if #created_flag_name.swap(
+                        true,
+                        core::sync::atomic::Ordering::SeqCst,
+                    ) {
+                        return None;
+                    }
+
                     let __self = Self {
                         #(#field_names),*,
                         #sender_fields_initializations
                     };
                     // Send initial values so subscribers can get them immediately.
                     #(#initial_value_sends)*
-                    __self
+                    Some(__self)
                 }
 
                 #setters
