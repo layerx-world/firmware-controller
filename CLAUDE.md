@@ -100,8 +100,10 @@ Processes the controller struct definition. Supports three field attributes:
 * Default name is `set_<field>`; custom name can be specified.
 * Can be combined with `publish` to also broadcast changes.
 
-The generated `new()` method initializes both user fields and generated sender fields, and sends
-initial values to Watch channels so subscribers get them immediately.
+The generated `new()` method returns `Option<Self>`, enforcing singleton semantics via a static
+`AtomicBool`. It returns `Some` on the first call and `None` on subsequent calls. It initializes
+both user fields and generated sender fields, and sends initial values to Watch channels so
+subscribers get them immediately.
 
 ### Impl Processing (`src/controller/item_impl.rs`)
 Processes the controller impl block. Distinguishes between:
@@ -161,7 +163,6 @@ testing.
 
 ## Key Limitations
 
-* Singleton operation: multiple controller instances interfere with each other.
 * Methods must be async and cannot use reference parameters/return types.
 * Maximum 16 subscribers per state/signal stream.
 * Published fields must implement `Clone`. With `tokio`, they must also implement `Send + Sync`.

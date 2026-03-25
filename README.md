@@ -151,7 +151,9 @@ The `controller` macro will generate the following for you:
 
 ## Controller struct
 
-* A `new` method that takes the fields of the struct as arguments and returns the struct.
+* A `new` method that takes the fields of the struct as arguments and returns `Option<Self>`.
+  Returns `Some` on the first call and `None` on subsequent calls, since only one instance of a
+  controller can exist at a time.
 * For each `published` field:
   * Setter for this field, named `set_<field-name>` (e.g., `set_state`), which broadcasts any
     changes made to this field.
@@ -287,10 +289,6 @@ The `controller` macro assumes that you have the following dependencies in your 
 
 ## Known limitations & Caveats
 
-* Currently only works as a singleton: you can create multiple instances of the controller but
-  if you run them simultaneously, they'll interfere with each others' operation. We hope to remove
-  this limitation in the future. Having said that, most firmware applications will only need a
-  single controller instance.
 * Method args/return type can't be reference types.
 * Methods must be async.
 * The maximum number of subscribers state change and signal streams is 16. We plan to provide an

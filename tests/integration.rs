@@ -74,7 +74,7 @@ use test_controller::*;
 #[cfg(feature = "embassy")]
 #[test]
 fn test_controller_basic_functionality() {
-    let controller = Controller::new(State::Idle, Mode::Normal, 0);
+    let controller = Controller::new(State::Idle, Mode::Normal, 0).unwrap();
 
     std::thread::spawn(move || {
         let executor = Box::leak(Box::new(embassy_executor::Executor::new()));
@@ -91,7 +91,7 @@ fn test_controller_basic_functionality() {
 #[cfg(feature = "tokio")]
 #[tokio::test]
 async fn test_controller_basic_functionality() {
-    let controller = Controller::new(State::Idle, Mode::Normal, 0);
+    let controller = Controller::new(State::Idle, Mode::Normal, 0).unwrap();
     tokio::spawn(controller_task(controller));
     tokio::task::yield_now().await;
 
@@ -251,7 +251,7 @@ mod visibility_test_controller {
 #[cfg(feature = "embassy")]
 #[test]
 fn test_visibility_on_fields() {
-    let controller = visibility_test_controller::Controller::new(42, -1, true);
+    let controller = visibility_test_controller::Controller::new(42, -1, true).unwrap();
     assert_eq!(controller.public_field, 42);
     assert_eq!(controller.crate_field, -1);
 
@@ -272,7 +272,7 @@ fn test_visibility_on_fields() {
 #[cfg(feature = "tokio")]
 #[tokio::test]
 async fn test_visibility_on_fields() {
-    let controller = visibility_test_controller::Controller::new(42, -1, true);
+    let controller = visibility_test_controller::Controller::new(42, -1, true).unwrap();
     assert_eq!(controller.public_field, 42);
     assert_eq!(controller.crate_field, -1);
 
@@ -343,7 +343,7 @@ fn poll_methods() {
     POLL_B_COUNT.store(0, Ordering::SeqCst);
     POLL_C_COUNT.store(0, Ordering::SeqCst);
 
-    let controller = poll_test_controller::Controller::new(42);
+    let controller = poll_test_controller::Controller::new(42).unwrap();
     assert_eq!(controller.value, 42);
 
     std::thread::spawn(move || {
@@ -369,7 +369,7 @@ async fn poll_methods() {
     POLL_B_COUNT.store(0, Ordering::SeqCst);
     POLL_C_COUNT.store(0, Ordering::SeqCst);
 
-    let controller = poll_test_controller::Controller::new(42);
+    let controller = poll_test_controller::Controller::new(42).unwrap();
     assert_eq!(controller.value, 42);
 
     tokio::spawn(async move { controller.run().await });
