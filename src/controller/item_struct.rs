@@ -50,35 +50,46 @@ pub(crate) fn expand(mut input: ItemStruct) -> Result<ExpandedStruct> {
         sender_fields_initializations,
         setters,
         subscriber_declarations,
+        initial_value_sends,
         published_fields_info,
     ) = struct_fields.published().fold(
-        (quote!(), quote!(), quote!(), quote!(), quote!(), Vec::new()),
+        (
+            quote!(),
+            quote!(),
+            quote!(),
+            quote!(),
+            quote!(),
+            Vec::new(),
+            Vec::new(),
+        ),
         |(
             watch_channels,
             sender_fields_declarations,
             sender_fields_initializations,
             setters,
             subscribers,
+            mut init_sends,
             mut infos,
         ),
          f| {
             let published = f.published.as_ref().unwrap();
-            let (watch_channel, sender_field, sender_field_init, setter, subscriber) = (
-                &published.watch_channel_declaration,
-                &published.sender_field_declaration,
-                &published.sender_field_initialization,
-                &published.setter,
-                &published.subscriber_declaration,
-            );
 
             infos.push(published.info.clone());
+            init_sends.push(&published.initial_value_send);
+
+            let watch_channel = &published.watch_channel_declaration;
+            let sender_field = &published.sender_field_declaration;
+            let sender_field_init = &published.sender_field_initialization;
+            let setter = &published.setter;
+            let subscriber = &published.subscriber_declaration;
 
             (
                 quote! { #watch_channels #watch_channel },
-                quote! { #sender_fields_declarations #sender_field, },
-                quote! { #sender_fields_initializations #sender_field_init, },
+                quote! { #sender_fields_declarations #sender_field },
+                quote! { #sender_fields_initializations #sender_field_init },
                 quote! { #setters #setter },
                 quote! { #subscribers #subscriber },
+                init_sends,
                 infos,
             )
         },
@@ -137,14 +148,7 @@ pub(crate) fn expand(mut input: ItemStruct) -> Result<ExpandedStruct> {
     });
     let vis = &input.vis;
 
-    // Generate initial value sends for Watch channels.
-    let initial_value_sends = published_fields_info.iter().map(|info| {
-        let field_name = &info.field_name;
-        let sender_name = Ident::new(&format!("{}_sender", field_name), field_name.span());
-        quote! {
-            __self.#sender_name.send(core::clone::Clone::clone(&__self.#field_name));
-        }
-    });
+    // Initial value sends are already collected from PublishedFieldCode.
 
     Ok(ExpandedStruct {
         tokens: quote! {
@@ -284,6 +288,8 @@ struct PublishedFieldCode {
     watch_channel_declaration: proc_macro2::TokenStream,
     /// Subscriber struct declaration.
     subscriber_declaration: proc_macro2::TokenStream,
+    /// Code to send initial value in `new()`.
+    initial_value_send: proc_macro2::TokenStream,
     /// Information to be passed to impl processing.
     info: PublishedFieldInfo,
 }
@@ -344,27 +350,21 @@ fn parse_controller_attrs(field: &mut Field) -> Result<ControllerAttrs> {
 
 /// Generate code for a published field using Watch channel.
 fn generate_publish_code(field: &Field, struct_name: &Ident) -> Result<PublishedFieldCode> {
-    let struct_name_str = struct_name.to_string();
-    let field_name = field.ident.as_ref().unwrap();
-    let field_name_str = field_name.to_string();
-    let ty = &field.ty;
+    let names = PublishNames::new(field, struct_name);
+    generate_publish_code_impl(&names)
+}
 
-    let struct_name_caps = pascal_to_snake_case(&struct_name_str).to_ascii_uppercase();
-    let field_name_caps = field_name_str.to_ascii_uppercase();
-    let watch_channel_name = Ident::new(
-        &format!("{struct_name_caps}_{field_name_caps}_WATCH"),
-        field.span(),
-    );
-
-    let field_name_pascal = snake_to_pascal_case(&field_name_str);
-    let subscriber_struct_name = Ident::new(
-        &format!("{struct_name_str}{field_name_pascal}"),
-        field.span(),
-    );
-    let max_subscribers = super::BROADCAST_MAX_SUBSCRIBERS;
-
-    let setter_name = Ident::new(&format!("set_{field_name_str}"), field.span());
-    let sender_name = Ident::new(&format!("{field_name_str}_sender"), field.span());
+#[cfg(feature = "embassy")]
+fn generate_publish_code_impl(n: &PublishNames) -> Result<PublishedFieldCode> {
+    let PublishNames {
+        field_name,
+        ty,
+        watch_channel_name,
+        subscriber_struct_name,
+        setter_name,
+        sender_name,
+        max_subscribers,
+    } = n;
 
     let sender_field_declaration = quote! {
         #sender_name:
@@ -373,18 +373,20 @@ fn generate_publish_code(field: &Field, struct_name: &Ident) -> Result<Published
                 embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
                 #ty,
                 #max_subscribers,
-            >
+            >,
     };
 
     let sender_field_initialization = quote! {
-        #sender_name: embassy_sync::watch::Watch::sender(&#watch_channel_name)
+        #sender_name: embassy_sync::watch::Watch::sender(&#watch_channel_name),
     };
 
     // Watch send() is sync, but we keep the setter async for API compatibility.
     let setter = quote! {
         pub async fn #setter_name(&mut self, value: #ty) {
             self.#field_name = value;
-            self.#sender_name.send(core::clone::Clone::clone(&self.#field_name));
+            self.#sender_name.send(
+                core::clone::Clone::clone(&self.#field_name),
+            );
         }
     };
 
@@ -410,11 +412,13 @@ fn generate_publish_code(field: &Field, struct_name: &Ident) -> Result<Published
 
         impl #subscriber_struct_name {
             pub fn new() -> Option<Self> {
-                embassy_sync::watch::Watch::receiver(&#watch_channel_name)
-                    .map(|receiver| Self {
-                        receiver,
-                        first_poll: true,
-                    })
+                embassy_sync::watch::Watch::receiver(
+                    &#watch_channel_name,
+                )
+                .map(|receiver| Self {
+                    receiver,
+                    first_poll: true,
+                })
             }
         }
 
@@ -445,9 +449,17 @@ fn generate_publish_code(field: &Field, struct_name: &Ident) -> Result<Published
         }
     };
 
+    let initial_value_send = {
+        quote! {
+            __self.#sender_name.send(
+                core::clone::Clone::clone(&__self.#field_name),
+            );
+        }
+    };
+
     let info = PublishedFieldInfo {
         field_name: field_name.clone(),
-        subscriber_struct_name,
+        subscriber_struct_name: subscriber_struct_name.clone(),
     };
 
     Ok(PublishedFieldCode {
@@ -456,6 +468,138 @@ fn generate_publish_code(field: &Field, struct_name: &Ident) -> Result<Published
         setter,
         watch_channel_declaration,
         subscriber_declaration,
+        initial_value_send,
         info,
     })
+}
+
+#[cfg(feature = "tokio")]
+fn generate_publish_code_impl(n: &PublishNames) -> Result<PublishedFieldCode> {
+    let PublishNames {
+        field_name,
+        ty,
+        watch_channel_name,
+        subscriber_struct_name,
+        setter_name,
+        ..
+    } = n;
+
+    let setter = quote! {
+        pub async fn #setter_name(&mut self, value: #ty) {
+            self.#field_name = value;
+            #watch_channel_name
+                .get()
+                .unwrap()
+                .send(core::clone::Clone::clone(&self.#field_name))
+                .ok();
+        }
+    };
+
+    let watch_channel_declaration = quote! {
+        static #watch_channel_name:
+            std::sync::OnceLock<tokio::sync::watch::Sender<#ty>>
+                = std::sync::OnceLock::new();
+    };
+
+    let subscriber_declaration = quote! {
+        pub struct #subscriber_struct_name {
+            inner: tokio_stream::wrappers::WatchStream<#ty>,
+        }
+
+        impl #subscriber_struct_name {
+            pub fn new() -> Option<Self> {
+                #watch_channel_name.get().map(|sender| Self {
+                    inner: tokio_stream::wrappers::WatchStream::new(
+                        sender.subscribe(),
+                    ),
+                })
+            }
+        }
+
+        impl futures::Stream for #subscriber_struct_name {
+            type Item = #ty;
+
+            fn poll_next(
+                self: core::pin::Pin<&mut Self>,
+                cx: &mut core::task::Context<'_>,
+            ) -> core::task::Poll<Option<Self::Item>> {
+                let this = self.get_mut();
+                futures::Stream::poll_next(
+                    core::pin::Pin::new(&mut this.inner),
+                    cx,
+                )
+            }
+        }
+    };
+
+    let initial_value_send = quote! {
+        let (__tx, _) = tokio::sync::watch::channel(
+            core::clone::Clone::clone(&__self.#field_name),
+        );
+        #watch_channel_name.set(__tx).ok();
+    };
+
+    let info = PublishedFieldInfo {
+        field_name: field_name.clone(),
+        subscriber_struct_name: subscriber_struct_name.clone(),
+    };
+
+    Ok(PublishedFieldCode {
+        sender_field_declaration: quote! {},
+        sender_field_initialization: quote! {},
+        setter,
+        watch_channel_declaration,
+        subscriber_declaration,
+        initial_value_send,
+        info,
+    })
+}
+
+/// Common name generation for published fields.
+struct PublishNames {
+    field_name: Ident,
+    ty: syn::Type,
+    watch_channel_name: Ident,
+    subscriber_struct_name: Ident,
+    setter_name: Ident,
+    #[cfg(feature = "embassy")]
+    sender_name: Ident,
+    #[cfg(feature = "embassy")]
+    max_subscribers: usize,
+}
+
+impl PublishNames {
+    fn new(field: &Field, struct_name: &Ident) -> Self {
+        let struct_name_str = struct_name.to_string();
+        let field_name = field.ident.as_ref().unwrap().clone();
+        let field_name_str = field_name.to_string();
+        let ty = field.ty.clone();
+
+        let struct_name_caps = pascal_to_snake_case(&struct_name_str).to_ascii_uppercase();
+        let field_name_caps = field_name_str.to_ascii_uppercase();
+        let watch_channel_name = Ident::new(
+            &format!("{struct_name_caps}_{field_name_caps}_WATCH"),
+            field.span(),
+        );
+
+        let field_name_pascal = snake_to_pascal_case(&field_name_str);
+        let subscriber_struct_name = Ident::new(
+            &format!("{struct_name_str}{field_name_pascal}"),
+            field.span(),
+        );
+
+        let setter_name = Ident::new(&format!("set_{field_name_str}"), field.span());
+
+        Self {
+            field_name,
+            ty,
+            watch_channel_name,
+            subscriber_struct_name,
+            setter_name,
+            #[cfg(feature = "embassy")]
+            sender_name: Ident::new(&format!("{field_name_str}_sender"), field.span()),
+            #[cfg(feature = "embassy")]
+            max_subscribers: super::BROADCAST_MAX_SUBSCRIBERS,
+        }
+    }
 }

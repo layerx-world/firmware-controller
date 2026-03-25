@@ -7,7 +7,9 @@ use syn::{spanned::Spanned, Item, ItemMod, Result};
 
 const ALL_CHANNEL_CAPACITY: usize = 8;
 const SIGNAL_CHANNEL_CAPACITY: usize = 8;
+#[cfg(feature = "embassy")]
 const BROADCAST_MAX_PUBLISHERS: usize = 1;
+#[cfg(feature = "embassy")]
 const BROADCAST_MAX_SUBSCRIBERS: usize = 16;
 
 pub(crate) fn expand_module(input: ItemMod) -> Result<TokenStream> {
