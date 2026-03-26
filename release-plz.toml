@@ -2,9 +2,8 @@
 # https://release-plz.dev/docs/config
 
 [workspace]
-# Use the existing tag naming convention.
-git_tag_name = "v{{ version }}"
-git_release_name = "Release {{ version }}"
+# Disable changelog for all packages by default.
+changelog_update = false
 
 # Enable all release features.
 git_release_enable = true
@@ -19,6 +18,21 @@ custom_minor_increment_regex = """\
 
 # PR configuration.
 pr_name = "🔖 Release"
+
+# Main crate: owns the changelog and tag.
+[[package]]
+name = "firmware-controller"
+changelog_update = true
+changelog_path = "./CHANGELOG.md"
+changelog_include = ["firmware-controller-macros"]
+git_tag_name = "v{{ version }}"
+git_release_name = "Release {{ version }}"
+
+# Macros crate: no changelog, no git tag/release (published to crates.io only).
+[[package]]
+name = "firmware-controller-macros"
+git_tag_enable = false
+git_release_enable = false
 
 # Changelog configuration for gimoji-based commits.
 # See: https://zeenix.github.io/gimoji/

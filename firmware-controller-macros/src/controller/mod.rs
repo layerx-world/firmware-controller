@@ -5,6 +5,11 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{spanned::Spanned, Item, ItemMod, Result};
 
+/// Returns the path to the `__private` module of the main crate.
+pub(crate) fn private_mod_path() -> TokenStream {
+    quote!(::firmware_controller::__private)
+}
+
 const ALL_CHANNEL_CAPACITY: usize = 8;
 const SIGNAL_CHANNEL_CAPACITY: usize = 8;
 #[cfg(feature = "embassy")]

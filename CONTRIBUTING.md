@@ -58,7 +58,7 @@ than waiting for the CI servers to run tests for you.
 
 ```sh
 # Run the full test suite, including doc test and compile-tests
-cargo test --all-features
+cargo test --locked
 ```
 
 Also please ensure that code is formatted correctly by running:
@@ -70,7 +70,7 @@ cargo +nightly fmt --all
 and clippy doesn't see anything wrong with the code:
 
 ```sh
-cargo clippy -- -D warnings
+cargo clippy --workspace --locked -- -D warnings
 ```
 
 Please note that there are times when clippy is wrong and you know what you are doing. In such

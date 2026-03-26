@@ -77,15 +77,15 @@ function ensure_clippy_installed() {
 }
 
 function check_formatting() {
-    hook_info "🎨 Running 'cargo +nightly fmt -- --check'"
-    cargo +nightly fmt -- --check \
+    hook_info "🎨 Running 'cargo +nightly fmt --all -- --check'"
+    cargo +nightly fmt --all -- --check \
         && hook_success "Project is formatted" \
         || hook_failure "Cargo format detected errors."
 }
 
 function check_clippy() {
-    hook_info "🔍 Running 'cargo clippy -- -D warnings'"
-    cargo clippy -- -D warnings \
+    hook_info "🔍 Running 'cargo clippy --workspace -- -D warnings'"
+    cargo clippy --workspace -- -D warnings \
         && hook_success "Clippy detected no issues" \
         || hook_failure "Cargo clippy detected errors."
 }

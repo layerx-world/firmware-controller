@@ -176,8 +176,9 @@ fn generate_select_body(
     getter_arms: &[&TokenStream],
     poll_arms: &[TokenStream],
 ) -> TokenStream {
+    let __priv = super::private_mod_path();
     quote! {
-        futures::select_biased! {
+        #__priv::futures::select_biased! {
             #(#arms,)*
             #(#setter_arms,)*
             #(#getter_arms,)*
@@ -193,8 +194,9 @@ fn generate_select_body(
     getter_arms: &[&TokenStream],
     poll_arms: &[TokenStream],
 ) -> TokenStream {
+    let __priv = super::private_mod_path();
     quote! {
-        tokio::select! {
+        #__priv::tokio::select! {
             biased;
             #(#arms)*
             #(#setter_arms)*
@@ -329,6 +331,7 @@ impl<'a> ProxiedMethodArgs<'a> {
 #[cfg(feature = "embassy")]
 impl ProxiedMethodArgs<'_> {
     fn generate(&self, struct_name: &Ident) -> ProxiedMethod {
+        let __priv = super::private_mod_path();
         let method_name = &self.method.sig.ident;
         let method_name_str = method_name.to_string();
         let in_types = &self.in_args.types;
@@ -350,17 +353,17 @@ impl ProxiedMethodArgs<'_> {
 
         let args_channel_declarations = quote! {
             static #input_channel_name:
-                embassy_sync::channel::Channel<
-                    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+                #__priv::embassy_sync::channel::Channel<
+                    #__priv::embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
                     (#(#in_types),*),
                     #capacity,
-                > = embassy_sync::channel::Channel::new();
+                > = #__priv::embassy_sync::channel::Channel::new();
             static #output_channel_name:
-                embassy_sync::channel::Channel<
-                    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+                #__priv::embassy_sync::channel::Channel<
+                    #__priv::embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
                     #out_type,
                     #capacity,
-                > = embassy_sync::channel::Channel::new();
+                > = #__priv::embassy_sync::channel::Channel::new();
         };
 
         let input_channel_rx_name =
@@ -369,25 +372,25 @@ impl ProxiedMethodArgs<'_> {
             Ident::new(&format!("{method_name_str}_tx"), self.method.span());
         let args_channels_rx_tx = quote! {
             let #input_channel_rx_name =
-                embassy_sync::channel::Channel::receiver(
+                #__priv::embassy_sync::channel::Channel::receiver(
                     &#input_channel_name,
                 );
             let #output_channel_tx_name =
-                embassy_sync::channel::Channel::sender(
+                #__priv::embassy_sync::channel::Channel::sender(
                     &#output_channel_name,
                 );
         };
 
         let select_arm = quote! {
-            (#(#in_names),*) = futures::FutureExt::fuse(
-                embassy_sync::channel::Receiver::receive(
+            (#(#in_names),*) = #__priv::futures::FutureExt::fuse(
+                #__priv::embassy_sync::channel::Receiver::receive(
                     &#input_channel_rx_name,
                 ),
             ) => {
                 let ret =
                     self.#method_name(#(#in_names),*).await;
 
-                embassy_sync::channel::Sender::send(
+                #__priv::embassy_sync::channel::Sender::send(
                     &#output_channel_tx_name,
                     ret,
                 ).await;
@@ -406,29 +409,29 @@ impl ProxiedMethodArgs<'_> {
         let mut client_method = self.method.clone();
         client_method.block = parse_quote!({
             // Method call.
-            embassy_sync::channel::Sender::send(
+            #__priv::embassy_sync::channel::Sender::send(
                 &self.#input_channel_tx_name,
                 #in_names_tuple,
             ).await;
 
             // Method return.
-            embassy_sync::channel::Receiver::receive(
+            #__priv::embassy_sync::channel::Receiver::receive(
                 &self.#output_channel_rx_name,
             ).await
         });
 
         let client_method_tx_rx_declarations = quote! {
             #input_channel_tx_name:
-                embassy_sync::channel::Sender<
+                #__priv::embassy_sync::channel::Sender<
                     'static,
-                    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+                    #__priv::embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
                     (#(#in_types),*),
                     #capacity,
                 >,
             #output_channel_rx_name:
-                embassy_sync::channel::Receiver<
+                #__priv::embassy_sync::channel::Receiver<
                     'static,
-                    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+                    #__priv::embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
                     #out_type,
                     #capacity,
                 >,
@@ -436,11 +439,11 @@ impl ProxiedMethodArgs<'_> {
 
         let client_method_tx_rx_initializations = quote! {
             #input_channel_tx_name:
-                embassy_sync::channel::Channel::sender(
+                #__priv::embassy_sync::channel::Channel::sender(
                     &#input_channel_name,
                 ),
             #output_channel_rx_name:
-                embassy_sync::channel::Channel::receiver(
+                #__priv::embassy_sync::channel::Channel::receiver(
                     &#output_channel_name,
                 ),
         };
@@ -459,6 +462,7 @@ impl ProxiedMethodArgs<'_> {
 #[cfg(feature = "tokio")]
 impl ProxiedMethodArgs<'_> {
     fn generate(&self, struct_name: &Ident) -> ProxiedMethod {
+        let __priv = super::private_mod_path();
         let method_name = &self.method.sig.ident;
         let method_name_str = method_name.to_string();
         let in_types = &self.in_args.types;
@@ -476,21 +480,21 @@ impl ProxiedMethodArgs<'_> {
 
         let args_channel_declarations = quote! {
             static #channel_name: std::sync::LazyLock<(
-                tokio::sync::mpsc::Sender<(
+                #__priv::tokio::sync::mpsc::Sender<(
                     (#(#in_types,)*),
-                    tokio::sync::oneshot::Sender<#out_type>,
+                    #__priv::tokio::sync::oneshot::Sender<#out_type>,
                 )>,
                 std::sync::Mutex<
                     Option<
-                        tokio::sync::mpsc::Receiver<(
+                        #__priv::tokio::sync::mpsc::Receiver<(
                             (#(#in_types,)*),
-                            tokio::sync::oneshot::Sender<#out_type>,
+                            #__priv::tokio::sync::oneshot::Sender<#out_type>,
                         )>,
                     >,
                 >,
             )> = std::sync::LazyLock::new(|| {
                 let (tx, rx) =
-                    tokio::sync::mpsc::channel(#capacity);
+                    #__priv::tokio::sync::mpsc::channel(#capacity);
                 (tx, std::sync::Mutex::new(Some(rx)))
             });
         };
@@ -524,7 +528,7 @@ impl ProxiedMethodArgs<'_> {
         let mut client_method = self.method.clone();
         client_method.block = parse_quote!({
             let (__resp_tx, __resp_rx) =
-                tokio::sync::oneshot::channel();
+                #__priv::tokio::sync::oneshot::channel();
             self.#tx_name
                 .send((#args, __resp_tx))
                 .await
@@ -533,9 +537,9 @@ impl ProxiedMethodArgs<'_> {
         });
 
         let client_method_tx_rx_declarations = quote! {
-            #tx_name: tokio::sync::mpsc::Sender<(
+            #tx_name: #__priv::tokio::sync::mpsc::Sender<(
                 (#(#in_types,)*),
-                tokio::sync::oneshot::Sender<#out_type>,
+                #__priv::tokio::sync::oneshot::Sender<#out_type>,
             )>,
         };
 
@@ -579,6 +583,7 @@ impl Signal {
         struct_name: &Ident,
         args: &MethodInputArgs,
     ) -> Result<Self> {
+        let __priv = super::private_mod_path();
         let MethodInputArgs { types, names } = args;
 
         let method_name = &method.sig.ident;
@@ -607,25 +612,25 @@ impl Signal {
 
         let declarations = quote! {
             static #signal_channel_name:
-                embassy_sync::pubsub::PubSubChannel<
-                    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+                #__priv::embassy_sync::pubsub::PubSubChannel<
+                    #__priv::embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
                     #args_struct_name,
                     #capacity,
                     #max_subscribers,
                     #max_publishers,
-                > = embassy_sync::pubsub::PubSubChannel::new();
+                > = #__priv::embassy_sync::pubsub::PubSubChannel::new();
 
             static #signal_publisher_name:
-                embassy_sync::once_lock::OnceLock<
-                    embassy_sync::pubsub::publisher::Publisher<
+                #__priv::embassy_sync::once_lock::OnceLock<
+                    #__priv::embassy_sync::pubsub::publisher::Publisher<
                         'static,
-                        embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+                        #__priv::embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
                         #args_struct_name,
                         #capacity,
                         #max_subscribers,
                         #max_publishers,
                     >,
-                > = embassy_sync::once_lock::OnceLock::new();
+                > = #__priv::embassy_sync::once_lock::OnceLock::new();
 
             #[derive(Debug, Clone)]
             pub struct #args_struct_name {
@@ -634,9 +639,9 @@ impl Signal {
 
             pub struct #subscriber_struct_name {
                 subscriber:
-                    embassy_sync::pubsub::subscriber::Subscriber<
+                    #__priv::embassy_sync::pubsub::subscriber::Subscriber<
                         'static,
-                        embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+                        #__priv::embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
                         #args_struct_name,
                         #capacity,
                         #max_subscribers,
@@ -646,7 +651,7 @@ impl Signal {
 
             impl #subscriber_struct_name {
                 pub fn new() -> Option<Self> {
-                    embassy_sync::pubsub::PubSubChannel::subscriber(
+                    #__priv::embassy_sync::pubsub::PubSubChannel::subscriber(
                         &#signal_channel_name,
                     )
                     .ok()
@@ -654,7 +659,7 @@ impl Signal {
                 }
             }
 
-            impl futures::Stream for #subscriber_struct_name {
+            impl #__priv::futures::Stream for #subscriber_struct_name {
                 type Item = #args_struct_name;
 
                 fn poll_next(
@@ -664,22 +669,22 @@ impl Signal {
                     let subscriber = core::pin::Pin::new(
                         &mut *self.get_mut().subscriber,
                     );
-                    futures::Stream::poll_next(subscriber, cx)
+                    #__priv::futures::Stream::poll_next(subscriber, cx)
                 }
             }
         };
 
         method.block = parse_quote!({
             let publisher =
-                embassy_sync::once_lock::OnceLock::get_or_init(
+                #__priv::embassy_sync::once_lock::OnceLock::get_or_init(
                     &#signal_publisher_name,
                     // Safety: The publisher is only initialized once.
-                    || embassy_sync::pubsub::PubSubChannel::publisher(
+                    || #__priv::embassy_sync::pubsub::PubSubChannel::publisher(
                         &#signal_channel_name,
                     )
                     .unwrap(),
                 );
-            embassy_sync::pubsub::publisher::Pub::publish(
+            #__priv::embassy_sync::pubsub::publisher::Pub::publish(
                 publisher,
                 #args_struct_name { #(#names),* },
             )
@@ -704,6 +709,7 @@ impl Signal {
         struct_name: &Ident,
         args: &MethodInputArgs,
     ) -> Result<Self> {
+        let __priv = super::private_mod_path();
         let MethodInputArgs { types, names } = args;
 
         let method_name = &method.sig.ident;
@@ -727,12 +733,12 @@ impl Signal {
         let declarations = quote! {
             static #signal_channel_name:
                 std::sync::LazyLock<
-                    tokio::sync::broadcast::Sender<
+                    #__priv::tokio::sync::broadcast::Sender<
                         #args_struct_name,
                     >,
                 > = std::sync::LazyLock::new(|| {
                     let (tx, _) =
-                        tokio::sync::broadcast::channel(
+                        #__priv::tokio::sync::broadcast::channel(
                             #capacity,
                         );
                     tx
@@ -746,7 +752,7 @@ impl Signal {
             pub struct #subscriber_struct_name {
                 inner: core::pin::Pin<
                     Box<
-                        dyn futures::Stream<
+                        dyn #__priv::futures::Stream<
                             Item = #args_struct_name,
                         > + Send,
                     >,
@@ -755,11 +761,11 @@ impl Signal {
 
             impl #subscriber_struct_name {
                 pub fn new() -> Option<Self> {
-                    use futures::StreamExt;
+                    use #__priv::futures::StreamExt;
 
                     Some(Self {
                         inner: Box::pin(
-                            tokio_stream::wrappers::BroadcastStream::new(
+                            #__priv::tokio_stream::wrappers::BroadcastStream::new(
                                 #signal_channel_name.subscribe(),
                             )
                             .filter_map(|result| async move {
@@ -770,7 +776,7 @@ impl Signal {
                 }
             }
 
-            impl futures::Stream for #subscriber_struct_name {
+            impl #__priv::futures::Stream for #subscriber_struct_name {
                 type Item = #args_struct_name;
 
                 fn poll_next(
@@ -811,15 +817,16 @@ enum PollDuration {
 #[cfg(feature = "embassy")]
 impl PollDuration {
     fn to_duration_expr(&self) -> TokenStream {
+        let __priv = super::private_mod_path();
         match self {
             PollDuration::Seconds(n) => {
-                quote! { embassy_time::Duration::from_secs(#n) }
+                quote! { #__priv::embassy_time::Duration::from_secs(#n) }
             }
             PollDuration::Millis(n) => {
-                quote! { embassy_time::Duration::from_millis(#n) }
+                quote! { #__priv::embassy_time::Duration::from_millis(#n) }
             }
             PollDuration::Micros(n) => {
-                quote! { embassy_time::Duration::from_micros(#n) }
+                quote! { #__priv::embassy_time::Duration::from_micros(#n) }
             }
         }
     }
@@ -1104,6 +1111,7 @@ struct PubGetter {
 
 #[cfg(feature = "embassy")]
 fn generate_pub_setter(field: &SetterFieldInfo, struct_name: &Ident) -> PubSetter {
+    let __priv = super::private_mod_path();
     let field_name = &field.field_name;
     let field_type = &field.field_type;
     let setter_method_name = &field.setter_name;
@@ -1127,17 +1135,17 @@ fn generate_pub_setter(field: &SetterFieldInfo, struct_name: &Ident) -> PubSette
 
     let channel_declarations = quote! {
         static #input_channel_name:
-            embassy_sync::channel::Channel<
-                embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+            #__priv::embassy_sync::channel::Channel<
+                #__priv::embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
                 #field_type,
                 #capacity,
-            > = embassy_sync::channel::Channel::new();
+            > = #__priv::embassy_sync::channel::Channel::new();
         static #output_channel_name:
-            embassy_sync::channel::Channel<
-                embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+            #__priv::embassy_sync::channel::Channel<
+                #__priv::embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
                 (),
                 #capacity,
-            > = embassy_sync::channel::Channel::new();
+            > = #__priv::embassy_sync::channel::Channel::new();
     };
 
     let input_channel_rx_name =
@@ -1146,11 +1154,11 @@ fn generate_pub_setter(field: &SetterFieldInfo, struct_name: &Ident) -> PubSette
         Ident::new(&format!("{}_ack_tx", field_name_str), field_name.span());
     let rx_tx = quote! {
         let #input_channel_rx_name =
-            embassy_sync::channel::Channel::receiver(
+            #__priv::embassy_sync::channel::Channel::receiver(
                 &#input_channel_name,
             );
         let #output_channel_tx_name =
-            embassy_sync::channel::Channel::sender(
+            #__priv::embassy_sync::channel::Channel::sender(
                 &#output_channel_name,
             );
     };
@@ -1162,14 +1170,14 @@ fn generate_pub_setter(field: &SetterFieldInfo, struct_name: &Ident) -> PubSette
     };
 
     let select_arm = quote! {
-        value = futures::FutureExt::fuse(
-            embassy_sync::channel::Receiver::receive(
+        value = #__priv::futures::FutureExt::fuse(
+            #__priv::embassy_sync::channel::Receiver::receive(
                 &#input_channel_rx_name,
             ),
         ) => {
             #setter_body
 
-            embassy_sync::channel::Sender::send(
+            #__priv::embassy_sync::channel::Sender::send(
                 &#output_channel_tx_name,
                 (),
             ).await;
@@ -1185,11 +1193,11 @@ fn generate_pub_setter(field: &SetterFieldInfo, struct_name: &Ident) -> PubSette
             &self,
             value: #field_type,
         ) {
-            embassy_sync::channel::Sender::send(
+            #__priv::embassy_sync::channel::Sender::send(
                 &self.#input_channel_tx_name,
                 value,
             ).await;
-            embassy_sync::channel::Receiver::receive(
+            #__priv::embassy_sync::channel::Receiver::receive(
                 &self.#output_channel_rx_name,
             ).await
         }
@@ -1197,16 +1205,16 @@ fn generate_pub_setter(field: &SetterFieldInfo, struct_name: &Ident) -> PubSette
 
     let client_tx_rx_declarations = quote! {
         #input_channel_tx_name:
-            embassy_sync::channel::Sender<
+            #__priv::embassy_sync::channel::Sender<
                 'static,
-                embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+                #__priv::embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
                 #field_type,
                 #capacity,
             >,
         #output_channel_rx_name:
-            embassy_sync::channel::Receiver<
+            #__priv::embassy_sync::channel::Receiver<
                 'static,
-                embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+                #__priv::embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
                 (),
                 #capacity,
             >,
@@ -1214,11 +1222,11 @@ fn generate_pub_setter(field: &SetterFieldInfo, struct_name: &Ident) -> PubSette
 
     let client_tx_rx_initializations = quote! {
         #input_channel_tx_name:
-            embassy_sync::channel::Channel::sender(
+            #__priv::embassy_sync::channel::Channel::sender(
                 &#input_channel_name,
             ),
         #output_channel_rx_name:
-            embassy_sync::channel::Channel::receiver(
+            #__priv::embassy_sync::channel::Channel::receiver(
                 &#output_channel_name,
             ),
     };
@@ -1235,6 +1243,7 @@ fn generate_pub_setter(field: &SetterFieldInfo, struct_name: &Ident) -> PubSette
 
 #[cfg(feature = "tokio")]
 fn generate_pub_setter(field: &SetterFieldInfo, struct_name: &Ident) -> PubSetter {
+    let __priv = super::private_mod_path();
     let field_name = &field.field_name;
     let field_type = &field.field_type;
     let setter_method_name = &field.setter_name;
@@ -1251,21 +1260,21 @@ fn generate_pub_setter(field: &SetterFieldInfo, struct_name: &Ident) -> PubSette
 
     let channel_declarations = quote! {
         static #channel_name: std::sync::LazyLock<(
-            tokio::sync::mpsc::Sender<(
+            #__priv::tokio::sync::mpsc::Sender<(
                 #field_type,
-                tokio::sync::oneshot::Sender<()>,
+                #__priv::tokio::sync::oneshot::Sender<()>,
             )>,
             std::sync::Mutex<
                 Option<
-                    tokio::sync::mpsc::Receiver<(
+                    #__priv::tokio::sync::mpsc::Receiver<(
                         #field_type,
-                        tokio::sync::oneshot::Sender<()>,
+                        #__priv::tokio::sync::oneshot::Sender<()>,
                     )>,
                 >,
             >,
         )> = std::sync::LazyLock::new(|| {
             let (tx, rx) =
-                tokio::sync::mpsc::channel(#capacity);
+                #__priv::tokio::sync::mpsc::channel(#capacity);
             (tx, std::sync::Mutex::new(Some(rx)))
         });
     };
@@ -1302,7 +1311,7 @@ fn generate_pub_setter(field: &SetterFieldInfo, struct_name: &Ident) -> PubSette
             value: #field_type,
         ) {
             let (__resp_tx, __resp_rx) =
-                tokio::sync::oneshot::channel();
+                #__priv::tokio::sync::oneshot::channel();
             self.#tx_name
                 .send((value, __resp_tx))
                 .await
@@ -1312,9 +1321,9 @@ fn generate_pub_setter(field: &SetterFieldInfo, struct_name: &Ident) -> PubSette
     };
 
     let client_tx_rx_declarations = quote! {
-        #tx_name: tokio::sync::mpsc::Sender<(
+        #tx_name: #__priv::tokio::sync::mpsc::Sender<(
             #field_type,
-            tokio::sync::oneshot::Sender<()>,
+            #__priv::tokio::sync::oneshot::Sender<()>,
         )>,
     };
 
@@ -1334,6 +1343,7 @@ fn generate_pub_setter(field: &SetterFieldInfo, struct_name: &Ident) -> PubSette
 
 #[cfg(feature = "embassy")]
 fn generate_pub_getter(field: &GetterFieldInfo, struct_name: &Ident) -> PubGetter {
+    let __priv = super::private_mod_path();
     let field_name = &field.field_name;
     let field_type = &field.field_type;
     let getter_name = &field.getter_name;
@@ -1357,17 +1367,17 @@ fn generate_pub_getter(field: &GetterFieldInfo, struct_name: &Ident) -> PubGette
 
     let channel_declarations = quote! {
         static #input_channel_name:
-            embassy_sync::channel::Channel<
-                embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+            #__priv::embassy_sync::channel::Channel<
+                #__priv::embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
                 (),
                 #capacity,
-            > = embassy_sync::channel::Channel::new();
+            > = #__priv::embassy_sync::channel::Channel::new();
         static #output_channel_name:
-            embassy_sync::channel::Channel<
-                embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+            #__priv::embassy_sync::channel::Channel<
+                #__priv::embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
                 #field_type,
                 #capacity,
-            > = embassy_sync::channel::Channel::new();
+            > = #__priv::embassy_sync::channel::Channel::new();
     };
 
     let input_channel_rx_name = Ident::new(
@@ -1380,25 +1390,25 @@ fn generate_pub_getter(field: &GetterFieldInfo, struct_name: &Ident) -> PubGette
     );
     let rx_tx = quote! {
         let #input_channel_rx_name =
-            embassy_sync::channel::Channel::receiver(
+            #__priv::embassy_sync::channel::Channel::receiver(
                 &#input_channel_name,
             );
         let #output_channel_tx_name =
-            embassy_sync::channel::Channel::sender(
+            #__priv::embassy_sync::channel::Channel::sender(
                 &#output_channel_name,
             );
     };
 
     let select_arm = quote! {
-        _ = futures::FutureExt::fuse(
-            embassy_sync::channel::Receiver::receive(
+        _ = #__priv::futures::FutureExt::fuse(
+            #__priv::embassy_sync::channel::Receiver::receive(
                 &#input_channel_rx_name,
             ),
         ) => {
             let value =
                 core::clone::Clone::clone(&self.#field_name);
 
-            embassy_sync::channel::Sender::send(
+            #__priv::embassy_sync::channel::Sender::send(
                 &#output_channel_tx_name,
                 value,
             ).await;
@@ -1415,11 +1425,11 @@ fn generate_pub_getter(field: &GetterFieldInfo, struct_name: &Ident) -> PubGette
     );
     let client_method = quote! {
         pub async fn #getter_name(&self) -> #field_type {
-            embassy_sync::channel::Sender::send(
+            #__priv::embassy_sync::channel::Sender::send(
                 &self.#input_channel_tx_name,
                 (),
             ).await;
-            embassy_sync::channel::Receiver::receive(
+            #__priv::embassy_sync::channel::Receiver::receive(
                 &self.#output_channel_rx_name,
             ).await
         }
@@ -1427,16 +1437,16 @@ fn generate_pub_getter(field: &GetterFieldInfo, struct_name: &Ident) -> PubGette
 
     let client_tx_rx_declarations = quote! {
         #input_channel_tx_name:
-            embassy_sync::channel::Sender<
+            #__priv::embassy_sync::channel::Sender<
                 'static,
-                embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+                #__priv::embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
                 (),
                 #capacity,
             >,
         #output_channel_rx_name:
-            embassy_sync::channel::Receiver<
+            #__priv::embassy_sync::channel::Receiver<
                 'static,
-                embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+                #__priv::embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
                 #field_type,
                 #capacity,
             >,
@@ -1444,11 +1454,11 @@ fn generate_pub_getter(field: &GetterFieldInfo, struct_name: &Ident) -> PubGette
 
     let client_tx_rx_initializations = quote! {
         #input_channel_tx_name:
-            embassy_sync::channel::Channel::sender(
+            #__priv::embassy_sync::channel::Channel::sender(
                 &#input_channel_name,
             ),
         #output_channel_rx_name:
-            embassy_sync::channel::Channel::receiver(
+            #__priv::embassy_sync::channel::Channel::receiver(
                 &#output_channel_name,
             ),
     };
@@ -1465,6 +1475,7 @@ fn generate_pub_getter(field: &GetterFieldInfo, struct_name: &Ident) -> PubGette
 
 #[cfg(feature = "tokio")]
 fn generate_pub_getter(field: &GetterFieldInfo, struct_name: &Ident) -> PubGetter {
+    let __priv = super::private_mod_path();
     let field_name = &field.field_name;
     let field_type = &field.field_type;
     let getter_name = &field.getter_name;
@@ -1481,19 +1492,19 @@ fn generate_pub_getter(field: &GetterFieldInfo, struct_name: &Ident) -> PubGette
 
     let channel_declarations = quote! {
         static #channel_name: std::sync::LazyLock<(
-            tokio::sync::mpsc::Sender<
-                tokio::sync::oneshot::Sender<#field_type>,
+            #__priv::tokio::sync::mpsc::Sender<
+                #__priv::tokio::sync::oneshot::Sender<#field_type>,
             >,
             std::sync::Mutex<
                 Option<
-                    tokio::sync::mpsc::Receiver<
-                        tokio::sync::oneshot::Sender<#field_type>,
+                    #__priv::tokio::sync::mpsc::Receiver<
+                        #__priv::tokio::sync::oneshot::Sender<#field_type>,
                     >,
                 >,
             >,
         )> = std::sync::LazyLock::new(|| {
             let (tx, rx) =
-                tokio::sync::mpsc::channel(#capacity);
+                #__priv::tokio::sync::mpsc::channel(#capacity);
             (tx, std::sync::Mutex::new(Some(rx)))
         });
     };
@@ -1520,15 +1531,15 @@ fn generate_pub_getter(field: &GetterFieldInfo, struct_name: &Ident) -> PubGette
     let client_method = quote! {
         pub async fn #getter_name(&self) -> #field_type {
             let (__resp_tx, __resp_rx) =
-                tokio::sync::oneshot::channel();
+                #__priv::tokio::sync::oneshot::channel();
             self.#tx_name.send(__resp_tx).await.ok();
             __resp_rx.await.unwrap()
         }
     };
 
     let client_tx_rx_declarations = quote! {
-        #tx_name: tokio::sync::mpsc::Sender<
-            tokio::sync::oneshot::Sender<#field_type>,
+        #tx_name: #__priv::tokio::sync::mpsc::Sender<
+            #__priv::tokio::sync::oneshot::Sender<#field_type>,
         >,
     };
 
@@ -1554,6 +1565,7 @@ fn generate_pub_getter(field: &GetterFieldInfo, struct_name: &Ident) -> PubGette
 /// - select_arms: Select arms that wait on ticker.next()/tick().
 #[cfg(feature = "embassy")]
 fn generate_poll_code(poll_methods: &[&PollMethod]) -> (Vec<TokenStream>, Vec<TokenStream>) {
+    let __priv = super::private_mod_path();
     // Group poll methods by duration.
     let mut groups: BTreeMap<PollDuration, Vec<&Ident>> = BTreeMap::new();
     for poll in poll_methods {
@@ -1575,11 +1587,11 @@ fn generate_poll_code(poll_methods: &[&PollMethod]) -> (Vec<TokenStream>, Vec<To
 
         ticker_declarations.push(quote! {
             let mut #ticker_name =
-                embassy_time::Ticker::every(#duration_expr);
+                #__priv::embassy_time::Ticker::every(#duration_expr);
         });
 
         select_arms.push(quote! {
-            _ = futures::FutureExt::fuse(
+            _ = #__priv::futures::FutureExt::fuse(
                 #ticker_name.next(),
             ) => {
                 #(self.#method_names().await;)*
@@ -1592,6 +1604,7 @@ fn generate_poll_code(poll_methods: &[&PollMethod]) -> (Vec<TokenStream>, Vec<To
 
 #[cfg(feature = "tokio")]
 fn generate_poll_code(poll_methods: &[&PollMethod]) -> (Vec<TokenStream>, Vec<TokenStream>) {
+    let __priv = super::private_mod_path();
     // Group poll methods by duration.
     let mut groups: BTreeMap<PollDuration, Vec<&Ident>> = BTreeMap::new();
     for poll in poll_methods {
@@ -1613,7 +1626,7 @@ fn generate_poll_code(poll_methods: &[&PollMethod]) -> (Vec<TokenStream>, Vec<To
 
         ticker_declarations.push(quote! {
             let mut #ticker_name =
-                tokio::time::interval(#duration_expr);
+                #__priv::tokio::time::interval(#duration_expr);
             // Skip the initial immediate tick.
             #ticker_name.tick().await;
         });

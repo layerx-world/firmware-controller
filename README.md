@@ -271,22 +271,6 @@ When the `tokio` feature is enabled:
 'static` (required by `tokio::sync::broadcast`), and published field types must implement `Send +
 Sync` (required by `tokio::sync::watch`). These constraints do not apply to the `embassy` backend.
 
-## Dependencies assumed
-
-The `controller` macro assumes that you have the following dependencies in your `Cargo.toml`:
-
-### Default (embassy)
-
-* `futures` with `async-await` feature enabled.
-* `embassy-sync`
-* `embassy-time` (only required if using poll methods)
-
-### With `tokio` feature
-
-* `futures` with `async-await` feature enabled.
-* `tokio` with `sync` feature (and `time` if using poll methods)
-* `tokio-stream` with `sync` feature
-
 ## Known limitations & Caveats
 
 * Method args/return type can't be reference types.

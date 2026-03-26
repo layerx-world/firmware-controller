@@ -1,0 +1,23 @@
+[package]
+name = "firmware-controller-macros"
+description = "Procedural macros for firmware-controller. Do not use directly."
+version = "0.5.0"
+edition = "2021"
+authors = [
+    "Zeeshan Ali Khan <zeenix@gmail.com>",
+    "Max Grollmann <max@grollmann.com>",
+]
+license = "MIT"
+repository = "https://github.com/layerx-world/firmware-controller/"
+
+[lib]
+proc-macro = true
+
+[features]
+embassy = []
+tokio = []
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["extra-traits", "fold", "full"] }

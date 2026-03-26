@@ -21,7 +21,9 @@ jobs:
         with:
           toolchain: stable
       - name: Test
-        run: cargo --locked test --no-default-features --features "${{ matrix.backend }}"
+        run: >-
+          cargo --locked test --workspace --no-default-features
+          --features "${{ matrix.backend }}"
 
   fmt:
     runs-on: ubuntu-latest
@@ -32,7 +34,7 @@ jobs:
           toolchain: nightly
           components: rustfmt
       - name: Check formatting
-        run: cargo --locked fmt -- --check
+        run: cargo --locked fmt --all -- --check
 
   clippy:
     runs-on: ubuntu-latest
@@ -47,5 +49,5 @@ jobs:
           components: clippy
       - name: Catch common mistakes
         run: >-
-          cargo --locked clippy --no-default-features
+          cargo --locked clippy --workspace --no-default-features
           --features "${{ matrix.backend }}" -- -D warnings
