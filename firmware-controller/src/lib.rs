@@ -1,4 +1,4 @@
-#![doc = include_str!("../../README.md")]
+#![doc = include_str!("../README.md")]
 
 #[cfg(not(any(feature = "embassy", feature = "tokio")))]
 compile_error!("Either the `embassy` or `tokio` feature must be enabled");
