@@ -1,4 +1,7 @@
-#![doc = include_str!("../README.md")]
+//! Procedural macros for `firmware-controller`. Do not use directly.
+//!
+//! See the [`firmware-controller`](https://docs.rs/firmware-controller) crate
+//! for documentation.
 
 #[cfg(not(any(feature = "embassy", feature = "tokio")))]
 compile_error!("Either the `embassy` or `tokio` feature must be enabled");
@@ -12,7 +15,8 @@ use syn::{parse_macro_input, punctuated::Punctuated, ItemMod, Meta, Token};
 mod controller;
 mod util;
 
-/// See the crate-level documentation for more information.
+/// See the [`firmware-controller`](https://docs.rs/firmware-controller) crate
+/// for documentation.
 #[proc_macro_attribute]
 pub fn controller(attr: TokenStream, item: TokenStream) -> TokenStream {
     let _args = parse_macro_input!(attr with Punctuated<Meta, Token![,]>::parse_terminated);

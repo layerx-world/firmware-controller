@@ -374,6 +374,7 @@ fn generate_publish_code(field: &Field, struct_name: &Ident) -> Result<Published
 
 #[cfg(feature = "embassy")]
 fn generate_publish_code_impl(n: &PublishNames) -> Result<PublishedFieldCode> {
+    let __priv = super::private_mod_path();
     let PublishNames {
         field_name,
         ty,
@@ -386,16 +387,16 @@ fn generate_publish_code_impl(n: &PublishNames) -> Result<PublishedFieldCode> {
 
     let sender_field_declaration = quote! {
         #sender_name:
-            embassy_sync::watch::Sender<
+            #__priv::embassy_sync::watch::Sender<
                 'static,
-                embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+                #__priv::embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
                 #ty,
                 #max_subscribers,
             >,
     };
 
     let sender_field_initialization = quote! {
-        #sender_name: embassy_sync::watch::Watch::sender(&#watch_channel_name),
+        #sender_name: #__priv::embassy_sync::watch::Watch::sender(&#watch_channel_name),
     };
 
     // Watch send() is sync, but we keep the setter async for API compatibility.
@@ -410,18 +411,18 @@ fn generate_publish_code_impl(n: &PublishNames) -> Result<PublishedFieldCode> {
 
     let watch_channel_declaration = quote! {
         static #watch_channel_name:
-            embassy_sync::watch::Watch<
-                embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+            #__priv::embassy_sync::watch::Watch<
+                #__priv::embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
                 #ty,
                 #max_subscribers,
-            > = embassy_sync::watch::Watch::new();
+            > = #__priv::embassy_sync::watch::Watch::new();
     };
 
     let subscriber_declaration = quote! {
         pub struct #subscriber_struct_name {
-            receiver: embassy_sync::watch::Receiver<
+            receiver: #__priv::embassy_sync::watch::Receiver<
                 'static,
-                embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+                #__priv::embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
                 #ty,
                 #max_subscribers,
             >,
@@ -430,7 +431,7 @@ fn generate_publish_code_impl(n: &PublishNames) -> Result<PublishedFieldCode> {
 
         impl #subscriber_struct_name {
             pub fn new() -> Option<Self> {
-                embassy_sync::watch::Watch::receiver(
+                #__priv::embassy_sync::watch::Watch::receiver(
                     &#watch_channel_name,
                 )
                 .map(|receiver| Self {
@@ -440,7 +441,7 @@ fn generate_publish_code_impl(n: &PublishNames) -> Result<PublishedFieldCode> {
             }
         }
 
-        impl futures::Stream for #subscriber_struct_name {
+        impl #__priv::futures::Stream for #subscriber_struct_name {
             type Item = #ty;
 
             fn poll_next(
@@ -461,7 +462,7 @@ fn generate_publish_code_impl(n: &PublishNames) -> Result<PublishedFieldCode> {
 
                 // Create changed() future and poll it in place.
                 let fut = this.receiver.changed();
-                futures::pin_mut!(fut);
+                #__priv::futures::pin_mut!(fut);
                 fut.poll(cx).map(Some)
             }
         }
@@ -493,6 +494,7 @@ fn generate_publish_code_impl(n: &PublishNames) -> Result<PublishedFieldCode> {
 
 #[cfg(feature = "tokio")]
 fn generate_publish_code_impl(n: &PublishNames) -> Result<PublishedFieldCode> {
+    let __priv = super::private_mod_path();
     let PublishNames {
         field_name,
         ty,
@@ -515,26 +517,26 @@ fn generate_publish_code_impl(n: &PublishNames) -> Result<PublishedFieldCode> {
 
     let watch_channel_declaration = quote! {
         static #watch_channel_name:
-            std::sync::OnceLock<tokio::sync::watch::Sender<#ty>>
+            std::sync::OnceLock<#__priv::tokio::sync::watch::Sender<#ty>>
                 = std::sync::OnceLock::new();
     };
 
     let subscriber_declaration = quote! {
         pub struct #subscriber_struct_name {
-            inner: tokio_stream::wrappers::WatchStream<#ty>,
+            inner: #__priv::tokio_stream::wrappers::WatchStream<#ty>,
         }
 
         impl #subscriber_struct_name {
             pub fn new() -> Option<Self> {
                 #watch_channel_name.get().map(|sender| Self {
-                    inner: tokio_stream::wrappers::WatchStream::new(
+                    inner: #__priv::tokio_stream::wrappers::WatchStream::new(
                         sender.subscribe(),
                     ),
                 })
             }
         }
 
-        impl futures::Stream for #subscriber_struct_name {
+        impl #__priv::futures::Stream for #subscriber_struct_name {
             type Item = #ty;
 
             fn poll_next(
@@ -542,7 +544,7 @@ fn generate_publish_code_impl(n: &PublishNames) -> Result<PublishedFieldCode> {
                 cx: &mut core::task::Context<'_>,
             ) -> core::task::Poll<Option<Self::Item>> {
                 let this = self.get_mut();
-                futures::Stream::poll_next(
+                #__priv::futures::Stream::poll_next(
                     core::pin::Pin::new(&mut this.inner),
                     cx,
                 )
@@ -551,7 +553,7 @@ fn generate_publish_code_impl(n: &PublishNames) -> Result<PublishedFieldCode> {
     };
 
     let initial_value_send = quote! {
-        let (__tx, _) = tokio::sync::watch::channel(
+        let (__tx, _) = #__priv::tokio::sync::watch::channel(
             core::clone::Clone::clone(&__self.#field_name),
         );
         #watch_channel_name.set(__tx).ok();

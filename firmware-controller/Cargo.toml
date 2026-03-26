@@ -1,0 +1,60 @@
+[package]
+name = "firmware-controller"
+description = "Controller (actor) macro to decouple interactions between components, supporting both embassy (no_std) and tokio (std) backends."
+version = "0.5.0"
+edition = "2021"
+authors = [
+    "Zeeshan Ali Khan <zeenix@gmail.com>",
+    "Max Grollmann <max@grollmann.com>",
+]
+license = "MIT"
+repository = "https://github.com/layerx-world/firmware-controller/"
+readme = "../README.md"
+
+[features]
+default = ["embassy"]
+embassy = [
+    "firmware-controller-macros/embassy",
+    "dep:embassy-sync",
+    "dep:embassy-time",
+]
+tokio = [
+    "firmware-controller-macros/tokio",
+    "dep:tokio",
+    "dep:tokio-stream",
+]
+
+[dependencies]
+firmware-controller-macros = { version = "=0.5.0", path = "../firmware-controller-macros", default-features = false }
+futures = { version = "0.3", default-features = false, features = ["async-await"] }
+
+# Embassy backend dependencies.
+embassy-sync = { version = "0.7.2", optional = true }
+embassy-time = { version = "0.5.0", optional = true }
+
+# Tokio backend dependencies.
+tokio = { version = "1", features = ["sync", "time"], optional = true }
+tokio-stream = { version = "0.1", features = ["sync"], optional = true }
+
+[dev-dependencies]
+heapless = { version = "0.7", default-features = false }
+futures = { version = "0.3", default-features = false, features = [
+    "async-await",
+    "std",
+    "executor",
+] }
+critical-section = { version = "1.2", features = ["std"] }
+embassy-sync = "0.7.2"
+embassy-executor = { version = "0.9.1", features = [
+    "arch-std",
+    "executor-thread",
+] }
+embassy-time = { version = "0.5.0", features = ["mock-driver"] }
+tokio = { version = "1", features = [
+    "macros",
+    "rt",
+    "sync",
+    "test-util",
+    "time",
+] }
+tokio-stream = { version = "0.1", features = ["sync"] }

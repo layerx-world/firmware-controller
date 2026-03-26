@@ -1,20 +1,33 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this
+repository.
 
 ## Project Overview
 
-This is a procedural macro crate that provides the `#[controller]` attribute macro for
-firmware/actor development. By default it targets `no_std` environments using embassy. With the
-`tokio` feature, it generates code for `std` environments using tokio. The macro generates
-boilerplate for decoupling component interactions through:
+This is a workspace with two crates that provide the `#[controller]` attribute macro for
+firmware/actor development:
+
+* **`firmware-controller`** (main crate): Re-exports the macro from `-macros` and provides
+  `#[doc(hidden)]` re-exports of runtime dependencies (`futures`, `embassy-sync`, `embassy-time`,
+  `tokio`, `tokio-stream`) so generated code can reference them without requiring users to add
+  these dependencies manually.
+* **`firmware-controller-macros`** (proc-macro crate): Contains the actual procedural macro
+  implementation. Generated code references external crates through
+  `::firmware_controller::__private::` re-exports.
+
+By default it targets `no_std` environments using embassy. With the `tokio` feature, it generates
+code for `std` environments using tokio. The macro generates boilerplate for decoupling component
+interactions through:
 
 * A controller struct that manages peripheral state.
 * Client API for sending commands to the controller.
 * Signal mechanism for broadcasting events (PubSubChannel).
 * Watch-based subscriptions for state change notifications (yields current value first).
 
-The macro is applied to a module containing both the controller struct definition and its impl block, allowing coordinated code generation of the controller infrastructure, client API, and communication channels.
+The macro is applied to a module containing both the controller struct definition and its impl
+block, allowing coordinated code generation of the controller infrastructure, client API, and
+communication channels.
 
 ## Build & Test Commands
 
@@ -29,14 +42,14 @@ cargo test --locked --no-default-features --features tokio
 cargo test --locked <test_name>
 
 # Check formatting (requires nightly)
-cargo +nightly fmt -- --check
+cargo +nightly fmt --all -- --check
 
 # Auto-format code (requires nightly)
-cargo +nightly fmt
+cargo +nightly fmt --all
 
 # Run clippy for both backends (CI fails on warnings)
-cargo clippy --locked -- -D warnings
-cargo clippy --locked --no-default-features --features tokio -- -D warnings
+cargo clippy --workspace --locked -- -D warnings
+cargo clippy --workspace --locked --no-default-features --features tokio -- -D warnings
 
 # Build the crate
 cargo build --locked
@@ -47,27 +60,52 @@ cargo doc --locked
 
 ## Architecture
 
+### Workspace Layout
+
+```
+firmware-controller/                    # workspace root
+├── firmware-controller/                # main/facade crate
+│   ├── src/lib.rs                      # re-exports macro + #[doc(hidden)] deps
+│   └── tests/integration.rs
+└── firmware-controller-macros/         # proc-macro crate
+    └── src/
+        ├── lib.rs                      # macro entry point
+        ├── util.rs                     # case conversion helpers
+        └── controller/
+            ├── mod.rs                  # module orchestration + private_mod_path()
+            ├── item_struct.rs          # struct field processing
+            └── item_impl.rs            # impl block processing
+```
+
 ### Backend Selection
 
-The crate has two mutually exclusive features: `embassy` (default) and `tokio`. Code generation
-functions use `#[cfg(feature = "...")]` in the proc macro code (not in generated code) to select
-which token streams to emit. When `tokio` is enabled:
+The crate has two mutually exclusive features: `embassy` (default) and `tokio`. The main crate
+forwards these features to the macros crate and conditionally depends on the corresponding runtime
+crates. Code generation functions use `#[cfg(feature = "...")]` in the proc macro code (not in
+generated code) to select which token streams to emit. When `tokio` is enabled:
 
-* `embassy_sync::channel::Channel` → `tokio::sync::mpsc` + `tokio::sync::oneshot`
+* `embassy_sync::channel::Channel` -> `tokio::sync::mpsc` + `tokio::sync::oneshot`
   (request/response actor pattern)
-* `embassy_sync::watch::Watch` → `tokio::sync::watch` (via `std::sync::OnceLock`)
-* `embassy_sync::pubsub::PubSubChannel` → `tokio::sync::broadcast`
+* `embassy_sync::watch::Watch` -> `tokio::sync::watch` (via `std::sync::OnceLock`)
+* `embassy_sync::pubsub::PubSubChannel` -> `tokio::sync::broadcast`
   (via `std::sync::LazyLock`, with `tokio_stream::wrappers::BroadcastStream`)
 * Watch subscribers use `tokio_stream::wrappers::WatchStream`.
-* `embassy_time::Ticker` → `tokio::time::interval`
-* `futures::select_biased!` → `tokio::select! { biased; ... }`
+* `embassy_time::Ticker` -> `tokio::time::interval`
+* `futures::select_biased!` -> `tokio::select! { biased; ... }`
 * Static channels use `std::sync::LazyLock` since tokio channels lack const constructors.
 
-### Macro Entry Point (`src/lib.rs`)
+### Re-export Pattern
+
+Generated code references external crates through the main crate's `__private` module:
+`::firmware_controller::__private::embassy_sync::...` etc. The `private_mod_path()` function in
+`controller/mod.rs` returns this path as a `TokenStream`, and each code-generation function binds
+it to a local `__priv` variable for use in `quote!` blocks.
+
+### Macro Entry Point (`firmware-controller-macros/src/lib.rs`)
 The `controller` attribute macro parses the input as an `ItemMod` (module) and calls
 `controller::expand_module()`.
 
-### Module Processing (`src/controller/mod.rs`)
+### Module Processing (`firmware-controller-macros/src/controller/mod.rs`)
 The `expand_module()` function:
 * Validates the module has a body with exactly one struct and one impl block.
 * Extracts the struct and impl items from the module.
@@ -82,7 +120,7 @@ Channel capacities and subscriber limits are also defined here:
 * `BROADCAST_MAX_SUBSCRIBERS`: 16 (Watch for published fields, PubSubChannel for signals,
   embassy only)
 
-### Struct Processing (`src/controller/item_struct.rs`)
+### Struct Processing (`firmware-controller-macros/src/controller/item_struct.rs`)
 Processes the controller struct definition. Supports three field attributes:
 
 **`#[controller(publish)]`** - Enables state change subscriptions:
@@ -105,7 +143,7 @@ The generated `new()` method returns `Option<Self>`, enforcing singleton semanti
 both user fields and generated sender fields, and sends initial values to Watch channels so
 subscribers get them immediately.
 
-### Impl Processing (`src/controller/item_impl.rs`)
+### Impl Processing (`firmware-controller-macros/src/controller/item_impl.rs`)
 Processes the controller impl block. Distinguishes between:
 
 **Proxied methods** (normal methods):
@@ -137,29 +175,19 @@ Processes the controller impl block. Distinguishes between:
 * Generates client-side getter methods that request current field value.
 * Generates client-side setter methods that update field value (and broadcast if published).
 
-The generated `run()` method contains a `select_biased!` (or `tokio::select! { biased; ... }`) loop
-that receives method calls from clients, dispatches them to the user's implementations, and handles
-periodic poll method calls.
+The generated `run()` method contains a `select_biased!` (or `tokio::select! { biased; ... }`)
+loop that receives method calls from clients, dispatches them to the user's implementations, and
+handles periodic poll method calls.
 
-### Utilities (`src/util.rs`)
-Case conversion functions (`pascal_to_snake_case`, `snake_to_pascal_case`) used for generating type and method names.
+### Utilities (`firmware-controller-macros/src/util.rs`)
+Case conversion functions (`pascal_to_snake_case`, `snake_to_pascal_case`) used for generating
+type and method names.
 
 ## Dependencies
 
-User code must have these dependencies (per README):
-
-**Default (embassy)**:
-* `futures` with `async-await` feature.
-* `embassy-sync` for channels and synchronization.
-* `embassy-time` for poll method timing (only required if using poll methods).
-
-**With `tokio` feature**:
-* `futures` with `async-await` feature.
-* `tokio` with `sync` feature (and `time` if using poll methods).
-* `tokio-stream` with `sync` feature.
-
-Dev dependencies include `embassy-executor`, `embassy-time`, `tokio`, and `tokio-stream` for
-testing.
+The main crate directly depends on all runtime crates needed by generated code. Users only need
+`firmware-controller` in their `Cargo.toml`. Dev dependencies (`embassy-executor`, `tokio` with
+test features, etc.) are only needed for the test suite.
 
 ## Key Limitations
 
